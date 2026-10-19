@@ -173,6 +173,14 @@ export function ReviewEditor({ draftId }: { draftId: string }) {
   // 五状态判定与证据链（dsh-bench 规范）：随保存进草稿，随提交进快照。
   const [verdict, setVerdict] = useState<VerdictKey | null>(null);
   const [evidenceText, setEvidenceText] = useState('');
+  /**
+   * 提交必填项的**表单提示**（不是接口错误）。
+   *
+   * 没选判定是用户漏填，属于可预期的输入缺失：点「提交审核」时就地提示，
+   * 不走 ErrorNotice（旧实现把裸对象当 ApiError 抛出，ErrorNotice 调
+   * describeFields() 时二次崩溃，用户看到的是整页「这个页面出错了」）。
+   */
+  const [verdictHint, setVerdictHint] = useState<string | null>(null);
   const [saveVersion, setSaveVersion] = useState(0);
 
   const [error, setError] = useState<ApiError | null>(null);
@@ -183,6 +191,8 @@ export function ReviewEditor({ draftId }: { draftId: string }) {
 
   const bodyRef = useRef<HTMLTextAreaElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  /** 结论面板：提示出现时滚到这里，用户不用自己找是哪一项没选。 */
+  const verdictPanelRef = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -229,7 +239,7 @@ export function ReviewEditor({ draftId }: { draftId: string }) {
         dshVersion,
         body: toBodySegments(bodyMarkdown),
         verdict,
-        evidence: parseEvidenceText(evidenceText),
+        evidenceRefs: parseEvidenceText(evidenceText),
       },
     });
     setSaveVersion(result.saveVersion);
@@ -265,13 +275,19 @@ export function ReviewEditor({ draftId }: { draftId: string }) {
     setSaved(null);
     setSubmission(null);
     try {
+      // 提交前置校验：判定是必填项。漏选属于用户可修正的输入缺失，
+      // 就地提示并停在表单里；不发起保存/提交，也不走 ErrorNotice。
+      if (verdict === null) {
+        setVerdictHint('请先选择判定（五状态之一）再提交审核；选好后点「提交审核」会一并保存并提交。');
+        verdictPanelRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        return;
+      }
+      setVerdictHint(null);
+
       // 先保存，拿到权威 saveVersion —— 不能拿旧的 saveVersion 直接提交。
       const freshVersion = await doSave();
       if (freshVersion === null) return;
 
-      if (verdict === null) {
-        throw { code: 'input_invalid', message: '提交前请先给出判定（五状态之一）。' } as ApiError;
-      }
       const result = await apiFetch<SubmitResult>('/api/drafts', {
         method: 'PATCH',
         json: {
@@ -549,8 +565,13 @@ export function ReviewEditor({ draftId }: { draftId: string }) {
           />
         </div>
 
-        <div className="panel">
+        <div className="panel" ref={verdictPanelRef}>
           <h2 style={{ fontSize: 16, marginTop: 0 }}>结论</h2>
+          {verdictHint ? (
+            <div className="notice warn" role="alert" style={{ fontSize: 14, margin: '0 0 10px' }}>
+              {verdictHint}
+            </div>
+          ) : null}
           <p className="muted" style={{ fontSize: 13, marginTop: 0 }}>
             一篇评测只给一个判定（对齐 dsh-bench 测评规范：五状态、不给总分、不用星级）。
             「真有用／帮倒忙／没啥差别」必须附证据链；「还说不准／没法测」可以没有。
@@ -564,7 +585,10 @@ export function ReviewEditor({ draftId }: { draftId: string }) {
                 type="radio"
                 name="verdict"
                 checked={verdict === v.key}
-                onChange={() => setVerdict(v.key)}
+                onChange={() => {
+                  setVerdict(v.key);
+                  setVerdictHint(null);
+                }}
               />
               {v.label}
               {v.conclusive ? <span className="muted" style={{ fontSize: 12 }}>（需证据）</span> : null}
