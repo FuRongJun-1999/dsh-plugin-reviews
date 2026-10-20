@@ -426,6 +426,69 @@ export const reviewsService = {
   },
 
   /**
+   * 删除草稿。
+   *
+   * 边界（2026-10-19 使用者决定）：**只要这篇评测从未发布过，草稿就能删**——
+   * 包括「已经提交、还在检查或待修改」的。已发布过的不能删：公开过的评测只能撤回，
+   * 历史修订留在账本里可复核，删除会让"曾经公开过什么"无从查证。
+   *
+   * 删除范围必须是整套：草稿 → 附件链接 → 该评测的修订快照 → 提交记录 →
+   * 评测本体 → 公共实体。少删一层就会被外键 RESTRICT 拦住，所以顺序写死在这里。
+   * 这些行都从未公开过，删掉不留审计缺口；公开过的评测走不到这条路径。
+   */
+  async deleteDraft(
+    ctx: CallerContext,
+    input: { draftId: string },
+    db?: SqliteDatabase,
+  ): Promise<{
+    deleted: true;
+    reviewId: string;
+    removed: { submissions: number; attachments: number };
+    kept: { revisions: number };
+  }> {
+    const userId = requireActiveUser(ctx);
+    const draftId = parseDraftId(input.draftId);
+
+    return withTransaction((tx) => {
+      const conn = tx.db;
+      const row = readDraftRow(conn, draftId);
+      if (row.draft_type !== 'review') throw err.unavailable('草稿不存在或已不可访问。');
+      if (row.owner_id !== userId) throw err.forbidden('只能删除自己的草稿。');
+      const reviewId = row.review_id;
+      if (!reviewId) throw err.unavailable('草稿不存在或已不可访问。');
+
+      const review = conn
+        .prepare('SELECT id, published_revision_id FROM reviews WHERE id = ?')
+        .get(reviewId) as { id: string; published_revision_id: string | null } | undefined;
+      if (!review) throw err.unavailable('草稿不存在或已不可访问。');
+      if (review.published_revision_id !== null) {
+        throw err.forbidden('这篇评测已经发布过，不能删除；请先撤回，历史修订会保留。');
+      }
+
+      const attachments = conn
+        .prepare('DELETE FROM draft_attachment_links WHERE draft_id = ?')
+        .run(draftId).changes;
+      const submissions = conn
+        .prepare(
+          `DELETE FROM content_submissions
+            WHERE draft_id = ?
+               OR review_revision_id IN (SELECT id FROM review_revisions WHERE review_id = ?)`,
+        )
+        .run(draftId, reviewId).changes;
+      conn.prepare('DELETE FROM content_drafts WHERE id = ?').run(draftId);
+      // 「最新一次提交」已随草稿一起删掉，指针置空，不留悬空引用。
+      conn.prepare('UPDATE reviews SET latest_submitted_revision_id = NULL WHERE id = ?').run(reviewId);
+      // 修订快照受 trg_review_revisions_no_delete 保护（架构第 34.2 节），**不删**。
+      // 它们从未公开过，公开面看不到（没有 published_revision_id），只是账本里的历史。
+      const keptRevisions = (
+        conn.prepare('SELECT COUNT(*) AS n FROM review_revisions WHERE review_id = ?').get(reviewId) as { n: number }
+      ).n;
+
+      return { deleted: true as const, reviewId, removed: { submissions, attachments }, kept: { revisions: keptRevisions } };
+    }, db);
+  },
+
+  /**
    * 保存草稿。
    *
    * 顺序很重要：

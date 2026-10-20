@@ -25,6 +25,7 @@ import Link from 'next/link';
 import { getDb } from '@/server/platform/db';
 import { currentContext } from '../api/_lib/context';
 import { MeNav } from '@/components/me-nav';
+import { DeleteDraftButton } from '@/components/delete-draft-button';
 import { submissionStateLabels } from '@/packages/common/status-text';
 import type { SubmissionState } from '@/packages/common/field-rules';
 import { formatDateTime } from '@/packages/common/time';
@@ -33,6 +34,10 @@ export const dynamic = 'force-dynamic';
 
 interface DraftRow {
   draft_id: string;
+  /** 该评测是否有过公开修订：0 表示从未发布，可以删；1 表示公开过，只能撤回 */
+  published: number;
+  /** 作者自己撤回过（withdrawn_at 非空）：提示可以继续编辑后重新提交 */
+  withdrawn_at: number | null;
   review_id: string;
   save_version: number;
   saved_at: number;
@@ -71,8 +76,12 @@ export default async function MePage() {
   const db = getDb();
   const drafts = db
     .prepare(
-      `SELECT d.id AS draft_id, d.review_id, d.save_version, d.saved_at, rev.title
+      `SELECT d.id AS draft_id, d.review_id, d.save_version, d.saved_at, rev.title,
+              CASE WHEN r.published_revision_id IS NULL THEN 0 ELSE 1 END AS published,
+              ce.withdrawn_at
          FROM content_drafts d
+         LEFT JOIN reviews r ON r.id = d.review_id
+         LEFT JOIN content_entities ce ON ce.id = d.review_id
          LEFT JOIN review_revisions rev ON rev.review_id = d.review_id
         WHERE d.owner_id = ?
         GROUP BY d.id
@@ -141,6 +150,24 @@ export default async function MePage() {
                         <span>最近保存 {formatDateTime(d.saved_at)}</span>
                         <code>{d.draft_id}</code>
                       </div>
+                      {d.withdrawn_at !== null ? (
+                        <p className="muted" style={{ fontSize: 12, margin: '6px 0 0' }}>
+                          这篇评测已撤回，读者看不到。继续编辑后重新提交，会生成第 {d.save_version + 1} 版之前的
+                          新修订（旧修订保留）。
+                          <Link href={`/me/drafts/${d.draft_id}`} style={{ marginLeft: 6 }}>
+                            继续编辑并重新提交
+                          </Link>
+                        </p>
+                      ) : null}
+                    </div>
+                    <div style={{ marginTop: 8 }}>
+                      {d.published === 0 ? (
+                        <DeleteDraftButton draftId={d.draft_id} />
+                      ) : (
+                        <span className="muted" style={{ fontSize: 12 }}>
+                          已发布过，不能删除；如需下架请用「撤回」
+                        </span>
+                      )}
                     </div>
                   </li>
                 ))}
