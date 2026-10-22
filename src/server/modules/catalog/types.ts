@@ -3,6 +3,7 @@
  */
 
 import type { PageRequest, PageResult } from '@/packages/common/result';
+import type { AssessmentTier } from '@/packages/common/assessment';
 
 /**
  * 收录检查所需的外部探针。
@@ -77,6 +78,10 @@ export interface PluginView {
   ownerLogin: string | null;
   ownerAvatarUrl: string | null;
   repoUpdatedAt: number | null;
+  /** 测评程度标签（由公开修订的档位聚合；历史无档位为 unlabelled）。 */
+  assessmentTier: AssessmentTier;
+  /** 是否已有公开的安全审计；null = 历史数据不足以判断。 */
+  securityAudit: boolean | null;
   repository: {
     repositoryId: string;
     githubRepositoryId: string;
@@ -109,6 +114,10 @@ export interface PluginSummary {
   repoUpdatedAt: number | null;
   /** 当前**公开**评测数（判据与内容可见性解析完全一致，见 service 内注释）。 */
   publicReviewCount: number;
+  /** 测评程度标签（由公开修订的档位聚合；历史无档位为 unlabelled）。 */
+  assessmentTier: AssessmentTier;
+  /** 是否已有公开的安全审计；null = 历史数据不足以判断。 */
+  securityAudit: boolean | null;
   availabilityState: 'unknown' | 'available' | 'unavailable';
 }
 
@@ -119,6 +128,12 @@ export interface PluginDirectoryQuery extends PageRequest {
   /** 用途标签：命中 repositories.topics 里的任意一个；`__none__` 表示"未分类"。 */
   tag?: string;
   hasReviews?: 'all' | 'yes' | 'no';
+  /**
+   * 测评档位筛选（与插件标签同一口径）：
+   *  - quick：最高档 = 快测；standard：最高档 = 标准测评/深度审计；
+   *  - security：至少一篇公开修订含安全审计（deep/security）。
+   */
+  assessment?: 'all' | 'quick' | 'standard' | 'security';
   /** info = 资料更新时间（默认）；reviews = 公开评测数。 */
   sort?: 'info' | 'reviews';
 }

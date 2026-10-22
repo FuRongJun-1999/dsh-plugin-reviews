@@ -25,10 +25,12 @@ describe('PUT /api/drafts 保存载荷', () => {
       body: [{ key: 'p0', markdown: '正文' }],
       verdict: 'helpful',
       evidenceRefs: [EVIDENCE],
+      assessmentLevel: 'deep',
     });
 
     expect(payload.verdict).toBe('helpful');
     expect(payload.evidence).toEqual([EVIDENCE]);
+    expect(payload.assessmentLevel).toBe('deep');
   });
 
   it('未给出判定/证据时落为 null 与空数组（v1 载荷兼容，不伪造）', () => {
@@ -36,9 +38,11 @@ describe('PUT /api/drafts 保存载荷', () => {
 
     expect(payload.verdict).toBeNull();
     expect(payload.evidence).toEqual([]);
+    expect(payload.assessmentLevel).toBeNull();
     // 旧草稿读出来仍然是合法载荷，不会因为升级而读不出来。
     expect(parseDraftPayload(payload).verdict).toBeNull();
     expect(parseDraftPayload(payload).evidence).toEqual([]);
+    expect(parseDraftPayload(payload).assessmentLevel).toBeNull();
   });
 
   it('非法判定原样透传，由 parseDraftPayload fail-closed 拒绝（不静默改成 null）', () => {

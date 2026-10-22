@@ -27,6 +27,7 @@ import { digest } from '@/server/platform/digest';
 import { newId } from '@/server/platform/id';
 import { err } from '@/packages/common/errors';
 import { buildPage, type PageResult } from '@/packages/common/result';
+import type { AssessmentTier } from '@/packages/common/assessment';
 import { ROOT_PLUGIN_PATH, parseSubmissionUrl } from './parse-url';
 import type {
   AcceptPluginSubmissionInput,
@@ -68,6 +69,77 @@ const PUBLIC_REVIEW_COUNT_SQL = `(
      AND ce.withdrawn_at IS NULL
      AND ce.hidden_at IS NULL
 )`;
+
+/**
+ * 公开修订的**档位聚合**（与 PUBLIC_REVIEW_COUNT_SQL 同一可见性口径）：
+ *  - 0 = 没有档位或只有「仅安全审计」；1 = 快测；2 = 标准测评 / 深度审计。
+ */
+const PUBLIC_ASSESSMENT_TIER_SQL = `(
+  SELECT COALESCE(MAX(CASE rev.assessment_level
+                        WHEN 'standard' THEN 2
+                        WHEN 'deep' THEN 2
+                        WHEN 'quick' THEN 1
+                        ELSE 0 END), 0)
+    FROM reviews r
+    JOIN review_revisions rev ON rev.id = r.published_revision_id
+    JOIN content_entities ce ON ce.id = r.id
+   WHERE r.plugin_id = p.id
+     AND r.published_revision_id IS NOT NULL
+     AND rev.review_id = r.id
+     AND ce.withdrawn_at IS NULL
+     AND ce.hidden_at IS NULL
+)`;
+
+/** 公开修订中带安全审计的篇数（deep / security）。 */
+const PUBLIC_SECURITY_AUDIT_COUNT_SQL = `(
+  SELECT COUNT(*)
+    FROM reviews r
+    JOIN review_revisions rev ON rev.id = r.published_revision_id
+    JOIN content_entities ce ON ce.id = r.id
+   WHERE r.plugin_id = p.id
+     AND r.published_revision_id IS NOT NULL
+     AND rev.review_id = r.id
+     AND ce.withdrawn_at IS NULL
+     AND ce.hidden_at IS NULL
+     AND rev.assessment_level IN ('deep','security')
+)`;
+
+/** 公开修订中**带档位**的篇数（区分「未测评」与「未标注档位」）。 */
+const PUBLIC_ASSESSED_COUNT_SQL = `(
+  SELECT COUNT(rev.assessment_level)
+    FROM reviews r
+    JOIN review_revisions rev ON rev.id = r.published_revision_id
+    JOIN content_entities ce ON ce.id = r.id
+   WHERE r.plugin_id = p.id
+     AND r.published_revision_id IS NOT NULL
+     AND rev.review_id = r.id
+     AND ce.withdrawn_at IS NULL
+     AND ce.hidden_at IS NULL
+)`;
+
+/**
+ * 三个聚合读数 → 插件标签。
+ *
+ * 口径（与 assessment 模块的 aggregateAssessment 一致）：
+ *  - 没有任何公开评测 → 未测评 + 未安全审计；
+ *  - 有公开评测但全部无档位（历史数据）→ 未标注档位 + 安全审计未标注（不猜）；
+ *  - 档位取最高；安全审计任一 deep/security 即已审计，
+ *    否则仍有历史无档位修订时为未标注，全部带档位且都不含安全审计时为未安全审计。
+ */
+export function assessmentBadgeOf(input: {
+  publicReviewCount: number;
+  tierValue: number;
+  securityCount: number;
+  assessedCount: number;
+}): { assessmentTier: AssessmentTier; securityAudit: boolean | null } {
+  if (input.publicReviewCount === 0) return { assessmentTier: 'none', securityAudit: false };
+  if (input.assessedCount === 0) return { assessmentTier: 'unlabelled', securityAudit: null };
+  const assessmentTier: AssessmentTier =
+    input.tierValue >= 2 ? 'standard' : input.tierValue === 1 ? 'quick' : 'none';
+  const securityAudit =
+    input.securityCount > 0 ? true : input.assessedCount < input.publicReviewCount ? null : false;
+  return { assessmentTier, securityAudit };
+}
 
 /**
  * 转义 `LIKE` 的通配符。
@@ -115,6 +187,11 @@ export function buildDirectoryWhere(req: PluginDirectoryQuery): { clause: string
 
   if (req.hasReviews === 'yes') conditions.push(`${PUBLIC_REVIEW_COUNT_SQL} > 0`);
   if (req.hasReviews === 'no') conditions.push(`${PUBLIC_REVIEW_COUNT_SQL} = 0`);
+
+  // 档位筛选与插件标签同一口径：快测=最高档 1；标测=最高档 2；安全审计=存在 deep/security。
+  if (req.assessment === 'quick') conditions.push(`${PUBLIC_ASSESSMENT_TIER_SQL} = 1`);
+  if (req.assessment === 'standard') conditions.push(`${PUBLIC_ASSESSMENT_TIER_SQL} = 2`);
+  if (req.assessment === 'security') conditions.push(`${PUBLIC_SECURITY_AUDIT_COUNT_SQL} > 0`);
 
   const clause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
   return { clause, params };
@@ -475,7 +552,11 @@ export function createCatalogService(deps: CatalogServiceDeps = {}): CatalogServ
                     p.display_name, p.description AS plugin_description, p.author_login, p.manifest_version, p.info_updated_at,
                     r.id AS repository_id, r.github_repository_id, r.full_name, r.html_url, r.is_archived,
                     r.description AS repo_description, r.topics, r.owner_login, r.owner_avatar_url, r.repo_updated_at,
-                    r.availability_state, r.last_checked_at, r.last_successful_check_at
+                    r.availability_state, r.last_checked_at, r.last_successful_check_at,
+                    ${PUBLIC_REVIEW_COUNT_SQL} AS public_review_count,
+                    ${PUBLIC_ASSESSMENT_TIER_SQL} AS assessment_tier_value,
+                    ${PUBLIC_SECURITY_AUDIT_COUNT_SQL} AS security_audit_count,
+                    ${PUBLIC_ASSESSED_COUNT_SQL} AS assessed_count
                FROM plugins p
                JOIN repositories r ON r.id = p.repository_id
               WHERE p.id = ?`,
@@ -504,6 +585,10 @@ export function createCatalogService(deps: CatalogServiceDeps = {}): CatalogServ
               availability_state: 'unknown' | 'available' | 'unavailable';
               last_checked_at: number | null;
               last_successful_check_at: number | null;
+              public_review_count: number;
+              assessment_tier_value: number;
+              security_audit_count: number;
+              assessed_count: number;
             }
           | undefined;
         if (!row) return null;
@@ -521,6 +606,12 @@ export function createCatalogService(deps: CatalogServiceDeps = {}): CatalogServ
           ownerLogin: row.owner_login,
           ownerAvatarUrl: row.owner_avatar_url,
           repoUpdatedAt: row.repo_updated_at,
+          ...assessmentBadgeOf({
+            publicReviewCount: Number(row.public_review_count ?? 0),
+            tierValue: Number(row.assessment_tier_value ?? 0),
+            securityCount: Number(row.security_audit_count ?? 0),
+            assessedCount: Number(row.assessed_count ?? 0),
+          }),
           repository: {
             repositoryId: row.repository_id,
             githubRepositoryId: row.github_repository_id,
@@ -553,7 +644,10 @@ export function createCatalogService(deps: CatalogServiceDeps = {}): CatalogServ
                     p.display_name, p.description AS plugin_description, p.author_login, p.manifest_version,
                     r.full_name, r.html_url, r.is_archived, r.availability_state,
                     r.description AS repo_description, r.topics, r.owner_login, r.owner_avatar_url, r.repo_updated_at,
-                    ${PUBLIC_REVIEW_COUNT_SQL} AS public_review_count
+                    ${PUBLIC_REVIEW_COUNT_SQL} AS public_review_count,
+                    ${PUBLIC_ASSESSMENT_TIER_SQL} AS assessment_tier_value,
+                    ${PUBLIC_SECURITY_AUDIT_COUNT_SQL} AS security_audit_count,
+                    ${PUBLIC_ASSESSED_COUNT_SQL} AS assessed_count
                FROM plugins p
                JOIN repositories r ON r.id = p.repository_id
                ${clause}
@@ -579,6 +673,9 @@ export function createCatalogService(deps: CatalogServiceDeps = {}): CatalogServ
           owner_avatar_url: string | null;
           repo_updated_at: number | null;
           public_review_count: number;
+          assessment_tier_value: number;
+          security_audit_count: number;
+          assessed_count: number;
         }[];
 
         const items: PluginSummary[] = rows.map((r) => ({
@@ -599,6 +696,12 @@ export function createCatalogService(deps: CatalogServiceDeps = {}): CatalogServ
           infoUpdatedAt: r.info_updated_at,
           repoUpdatedAt: r.repo_updated_at,
           publicReviewCount: Number(r.public_review_count ?? 0),
+          ...assessmentBadgeOf({
+            publicReviewCount: Number(r.public_review_count ?? 0),
+            tierValue: Number(r.assessment_tier_value ?? 0),
+            securityCount: Number(r.security_audit_count ?? 0),
+            assessedCount: Number(r.assessed_count ?? 0),
+          }),
           availabilityState: r.availability_state,
         }));
 

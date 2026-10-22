@@ -82,6 +82,7 @@ function submitWith(
       expectedSaveVersion: 1,
       requestKey: `req-${newId()}`,
       publishIntent: 'publish',
+      assessmentLevel: 'standard',
       title: '一篇实测评测',
       bodyMarkdown: GOOD_BODY,
       pluginVersion: { kind: 'unknown' },

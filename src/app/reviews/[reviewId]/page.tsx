@@ -22,6 +22,7 @@ import { BackLink } from '@/components/back-link';
 import type { VersionValue } from '@/packages/common/field-rules';
 import { formatDateTime } from '@/packages/common/time';
 import { isVerdictKey, parseEvidenceRefs, verdictDef, type EvidenceRef } from '@/packages/common/verdict';
+import { assessmentLabel } from '@/packages/common/assessment';
 
 export const dynamic = 'force-dynamic';
 
@@ -41,6 +42,8 @@ interface Row {
   verdict: string | null;
   /** 证据链 JSON 文本（[{url, note}]）；历史修订可能为 null。 */
   evidence_refs: string | null;
+  /** 测评档位；历史修订可能为 null（未标注）。 */
+  assessment_level: string | null;
 }
 
 export default async function ReviewDetailPage({ params }: { params: Promise<{ reviewId: string }> }) {
@@ -90,7 +93,7 @@ export default async function ReviewDetailPage({ params }: { params: Promise<{ r
   const row = db
     .prepare(
       `SELECT r.id AS review_id, r.plugin_id, r.source_kind, rev.title, rev.body_markdown,
-              rev.plugin_version, rev.dsh_version, rev.verdict, rev.evidence_refs,
+              rev.plugin_version, rev.dsh_version, rev.verdict, rev.evidence_refs, rev.assessment_level,
               u.nickname AS author_nickname, ce.author_id,
               ce.first_published_at, ce.public_updated_at
          FROM reviews r
@@ -106,6 +109,7 @@ export default async function ReviewDetailPage({ params }: { params: Promise<{ r
   const dshVersion = JSON.parse(row.dsh_version) as VersionValue;
   // 判定与证据：老修订没有 → 如实显示「未给出」，不补写（规范：未测就写未测）。
   const verdictKey = isVerdictKey(row.verdict) ? row.verdict : null;
+  const assessmentText = assessmentLabel(row.assessment_level);
   let evidenceRefs: EvidenceRef[] = [];
   if (row.evidence_refs) {
     try {
@@ -183,6 +187,9 @@ export default async function ReviewDetailPage({ params }: { params: Promise<{ r
               <span>{formatVersionLabel('插件', pluginVersion)}</span>
               <span>{formatVersionLabel('DSH', dshVersion)}</span>
               <span>{row.author_nickname}</span>
+              <span className={assessmentText ? 'tag site' : 'tag'} title="本篇测评档位（dsh-bench 测评规范）">
+                {assessmentText ?? '未标注档位'}
+              </span>
               {verdictKey ? (
                 <span className="tag verdict-badge" title="五状态判定（dsh-bench 测评规范）">
                   {verdictDef(verdictKey).label}

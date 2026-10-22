@@ -118,14 +118,15 @@ export function insertReviewRevision(
     body?: string;
     pluginVersion?: unknown;
     dshVersion?: unknown;
+    assessmentLevel?: 'quick' | 'standard' | 'deep' | 'security' | null;
   },
 ): string {
   const id = newId();
   const now = Date.now();
   db.prepare(
     `INSERT INTO review_revisions
-       (id, review_id, revision_number, plugin_id, title, body_markdown, plugin_version, dsh_version, submitted_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, review_id, revision_number, plugin_id, title, body_markdown, plugin_version, dsh_version, assessment_level, submitted_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     input.reviewId,
@@ -135,6 +136,7 @@ export function insertReviewRevision(
     input.body ?? '正文',
     JSON.stringify(input.pluginVersion ?? { kind: 'unknown' }),
     JSON.stringify(input.dshVersion ?? { kind: 'unknown' }),
+    input.assessmentLevel ?? null,
     now,
   );
   return id;

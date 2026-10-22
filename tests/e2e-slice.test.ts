@@ -182,6 +182,7 @@ describe('端到端：登录 → 收录插件 → 写评测 → 提交 → 审�
       expectedSaveVersion: confirmedVersion,
       requestKey: 'rk-submit-1',
       publishIntent: 'publish',
+      assessmentLevel: 'standard',
       // 五状态判定（dsh-bench 规范）：publish 意图必填；有结论的判定带证据。
       verdict: 'helpful',
       evidenceRefs: [{ url: 'https://example.com/bench-evidence', note: null }],
@@ -455,6 +456,7 @@ describe('端到端：发布资格不能被绕过', () => {
       expectedSaveVersion: saved.saveVersion,
       requestKey: 'rk-sub-2',
       publishIntent: 'publish',
+      assessmentLevel: 'standard',
       // 五状态判定（dsh-bench 规范）：publish 意图必填；有结论的判定带证据。
       verdict: 'helpful',
       evidenceRefs: [{ url: 'https://example.com/bench-evidence', note: null }],
@@ -515,6 +517,7 @@ describe('端到端：发布资格不能被绕过', () => {
       expectedSaveVersion: saved.saveVersion,
       requestKey: 'rk-sub-3',
       publishIntent: 'publish',
+      assessmentLevel: 'standard',
       // 五状态判定（dsh-bench 规范）：publish 意图必填；有结论的判定带证据。
       verdict: 'helpful',
       evidenceRefs: [{ url: 'https://example.com/bench-evidence', note: null }],

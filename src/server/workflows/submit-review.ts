@@ -18,6 +18,7 @@ import { assertCanWrite } from '@/server/platform/context';
 import { err } from '@/packages/common/errors';
 import type { VersionValue } from '@/packages/common/field-rules';
 import { parseEvidenceRefs, parseVerdict, verdictDef, type EvidenceRef, type VerdictKey } from '@/packages/common/verdict';
+import { parseAssessmentLevel, type AssessmentLevel } from '@/packages/common/assessment';
 
 // ============================================================
 // 完整发布校验（架构第 66.2 节）
@@ -86,6 +87,11 @@ export interface SubmitReviewInput {
   verdict?: string | null;
   /** 证据链（[{url, note?}]）。有结论的判定至少一条；draft_only 不收。 */
   evidenceRefs?: unknown;
+  /**
+   * 测评档位（dsh-bench 规范）。`publish` 必填；`draft_only` 可为 null。
+   * 档位决定这篇评测能说什么（快测不进能力榜、深度审计含安全专项）。
+   */
+  assessmentLevel?: string | null;
 }
 
 export interface SubmitReviewResult {
@@ -105,6 +111,7 @@ export function submissionDigest(input: {
   bodyMarkdown: string;
   verdict: string | null;
   evidenceRefs: EvidenceRef[];
+  assessmentLevel: string | null;
 }): string {
   return digest(input);
 }
@@ -153,6 +160,9 @@ export async function submitReview(
     verdict === null
       ? []
       : parseEvidenceRefs(input.evidenceRefs, { required: verdictDef(verdict).conclusive });
+  // 档位与判定同一层：正式提交必须说明这是哪一档；draft_only 不收。
+  const assessmentLevel: AssessmentLevel | null =
+    input.publishIntent === 'publish' ? parseAssessmentLevel(input.assessmentLevel) : null;
 
   const wantDigest = submissionDigest({
     draftId: input.draftId,
@@ -161,6 +171,7 @@ export async function submitReview(
     bodyMarkdown: input.bodyMarkdown,
     verdict,
     evidenceRefs,
+    assessmentLevel,
   });
 
   if (existing) {
@@ -214,8 +225,8 @@ export async function submitReview(
     tx.db
       .prepare(
         `INSERT INTO review_revisions
-           (id, review_id, revision_number, plugin_id, title, body_markdown, plugin_version, dsh_version, verdict, evidence_refs, submitted_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (id, review_id, revision_number, plugin_id, title, body_markdown, plugin_version, dsh_version, verdict, evidence_refs, assessment_level, submitted_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         revisionId,
@@ -228,6 +239,7 @@ export async function submitReview(
         JSON.stringify(input.dshVersion),
         verdict,
         evidenceRefs.length > 0 ? JSON.stringify(evidenceRefs) : null,
+        assessmentLevel,
         now,
       );
 

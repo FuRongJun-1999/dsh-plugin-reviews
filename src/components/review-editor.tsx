@@ -23,6 +23,7 @@ import {
   newRequestKey,
 } from './api-client';
 import { VERDICTS, verdictDef, type EvidenceRef, type VerdictKey } from '@/packages/common/verdict';
+import { ASSESSMENTS, type AssessmentLevel } from '@/packages/common/assessment';
 
 type VersionValue = { kind: 'unknown' } | { kind: 'known'; value: string };
 
@@ -35,6 +36,8 @@ interface DraftPayload {
   /** v1 载荷没有这两项（可选）：读取方按「未给出」呈现。 */
   verdict?: VerdictKey | null;
   evidence?: EvidenceRef[];
+  /** v3 载荷才有；旧载荷缺键按「未标注」呈现。 */
+  assessmentLevel?: AssessmentLevel | null;
 }
 
 interface DraftView {
@@ -170,6 +173,9 @@ export function ReviewEditor({ draftId }: { draftId: string }) {
   const [bodyMarkdown, setBodyMarkdown] = useState('');
   const [pluginVersion, setPluginVersion] = useState<VersionValue>({ kind: 'unknown' });
   const [dshVersion, setDshVersion] = useState<VersionValue>({ kind: 'unknown' });
+  // 测评档位（快测/标准测评/深度审计/仅安全审计）：随保存进草稿，随提交进快照。
+  const [assessmentLevel, setAssessmentLevel] = useState<AssessmentLevel | null>(null);
+  const [assessmentHint, setAssessmentHint] = useState<string | null>(null);
   // 五状态判定与证据链（dsh-bench 规范）：随保存进草稿，随提交进快照。
   const [verdict, setVerdict] = useState<VerdictKey | null>(null);
   const [evidenceText, setEvidenceText] = useState('');
@@ -207,6 +213,7 @@ export function ReviewEditor({ draftId }: { draftId: string }) {
       setDshVersion(data.payload.dshVersion);
       // 旧草稿（v1 载荷）没有这两项：按「未给出」还原，不伪造。
       setVerdict(data.payload.verdict ?? null);
+      setAssessmentLevel(data.payload.assessmentLevel ?? null);
       setEvidenceText(formatEvidenceText(data.payload.evidence ?? []));
       setSaveVersion(data.saveVersion);
       setError(null);
@@ -240,6 +247,7 @@ export function ReviewEditor({ draftId }: { draftId: string }) {
         body: toBodySegments(bodyMarkdown),
         verdict,
         evidenceRefs: parseEvidenceText(evidenceText),
+        assessmentLevel,
       },
     });
     setSaveVersion(result.saveVersion);
@@ -275,8 +283,15 @@ export function ReviewEditor({ draftId }: { draftId: string }) {
     setSaved(null);
     setSubmission(null);
     try {
-      // 提交前置校验：判定是必填项。漏选属于用户可修正的输入缺失，
+      // 提交前置校验：档位与判定都是必填项。漏选属于用户可修正的输入缺失，
       // 就地提示并停在表单里；不发起保存/提交，也不走 ErrorNotice。
+      if (assessmentLevel === null) {
+        setAssessmentHint('请先选择测评档位（快测／标准测评／深度审计／仅安全审计）。');
+        verdictPanelRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        return;
+      }
+      setAssessmentHint(null);
+
       if (verdict === null) {
         setVerdictHint('请先选择判定（五状态之一）再提交审核；选好后点「提交审核」会一并保存并提交。');
         verdictPanelRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -300,6 +315,7 @@ export function ReviewEditor({ draftId }: { draftId: string }) {
           dshVersion,
           verdict,
           evidenceRefs: parseEvidenceText(evidenceText),
+          assessmentLevel,
         },
       });
       setSubmission(result);
@@ -567,6 +583,37 @@ export function ReviewEditor({ draftId }: { draftId: string }) {
 
         <div className="panel" ref={verdictPanelRef}>
           <h2 style={{ fontSize: 16, marginTop: 0 }}>结论</h2>
+
+          <p className="muted" style={{ fontSize: 13, marginTop: 0 }}>
+            先选择本次测评的档位（对齐 dsh-bench 规范）：快测只做安装／功能点／卸载，不进能力榜；
+            标准测评出五状态；深度审计 = 标准测评 + 安全审计；仅安全审计不产出能力结论。
+          </p>
+          {assessmentHint ? (
+            <div className="notice warn" role="alert" style={{ fontSize: 14, margin: '0 0 10px' }}>
+              {assessmentHint}
+            </div>
+          ) : null}
+          {ASSESSMENTS.map((a) => (
+            <label
+              key={a.key}
+              style={{ display: 'inline-flex', gap: 6, alignItems: 'center', marginRight: 14, marginBottom: 8, fontSize: 14 }}
+            >
+              <input
+                type="radio"
+                name="assessmentLevel"
+                checked={assessmentLevel === a.key}
+                onChange={() => {
+                  setAssessmentLevel(a.key);
+                  setAssessmentHint(null);
+                }}
+              />
+              {a.label}
+              {a.security ? <span className="muted" style={{ fontSize: 12 }}>（含安全审计）</span> : null}
+            </label>
+          ))}
+
+          <div style={{ borderTop: '1px solid var(--line)', margin: '12px 0' }} />
+
           {verdictHint ? (
             <div className="notice warn" role="alert" style={{ fontSize: 14, margin: '0 0 10px' }}>
               {verdictHint}

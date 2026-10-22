@@ -20,6 +20,7 @@ import type { PageRequest, PageResult } from '@/packages/common/result';
 import { buildPage } from '@/packages/common/result';
 import { isSha256Hex, isUuidV7, type ContentType, type VersionValue } from '@/packages/common/field-rules';
 import { parseEvidenceRefs, parseVerdict, type EvidenceRef, type VerdictKey } from '@/packages/common/verdict';
+import { parseOptionalAssessmentLevel, type AssessmentLevel } from '@/packages/common/assessment';
 
 // ============================================================
 // 结构：草稿载荷
@@ -54,13 +55,19 @@ export interface DraftPayload {
   verdict?: VerdictKey | null;
   /** 证据链（可复核链接）；未填为空数组（v1 载荷缺键，同 verdict 的可选理由）。 */
   evidence?: EvidenceRef[];
+  /**
+   * 测评档位（dsh-bench 规范）：未选为 null，提交时必填。
+   * 可选是因为 v1/v2 载荷没有这个键——运行时按「未标注」读取，不猜成「未测评」。
+   */
+  assessmentLevel?: AssessmentLevel | null;
 }
 
 /**
- * v2：载荷增补 verdict/evidence。解析对旧载荷（缺这两个键）向后兼容——
- * 缺键视为「未给出」（null / []），不报错（历史草稿不因升级而读不出来）。
+ * v3：载荷增补 assessmentLevel；v2 增补 verdict/evidence。
+ * 解析对旧载荷（缺这些键）向后兼容——缺键视为「未给出」，不报错
+ * （历史草稿不因升级而读不出来）。
  */
-export const DRAFT_PAYLOAD_SCHEMA_VERSION = 2;
+export const DRAFT_PAYLOAD_SCHEMA_VERSION = 3;
 
 // ============================================================
 // 结构：视图
@@ -88,6 +95,8 @@ export interface PublishedRevisionSummary {
   pluginVersion: VersionValue;
   dshVersion: VersionValue;
   submittedAt: number;
+  /** 本篇的测评档位；历史修订为 null（未标注）。 */
+  assessmentLevel: AssessmentLevel | null;
 }
 
 export interface ReviewDetail {
@@ -163,6 +172,7 @@ interface RevisionRow {
   plugin_version: string;
   dsh_version: string;
   submitted_at: number;
+  assessment_level: string | null;
 }
 
 // ============================================================
@@ -315,6 +325,8 @@ export function parseDraftPayload(raw: unknown): DraftPayload {
     verdict = parseVerdict(obj.verdict, 'payload.verdict');
   }
   const evidence = parseEvidenceRefs(obj.evidence, { required: false, path: 'payload.evidence' });
+  // v1/v2 兼容：旧载荷没有 assessmentLevel —— 缺键 = 未标注（null）。
+  const assessmentLevel = parseOptionalAssessmentLevel(obj.assessmentLevel, 'payload.assessmentLevel');
 
   return {
     title: obj.title,
@@ -324,6 +336,7 @@ export function parseDraftPayload(raw: unknown): DraftPayload {
     body,
     verdict,
     evidence,
+    assessmentLevel,
   };
 }
 
@@ -386,6 +399,7 @@ export const reviewsService = {
         body: [],
         verdict: null,
         evidence: [],
+        assessmentLevel: null,
       };
 
       // 延迟配对：先插公共实体（回指自身），再插具体子表，最后落草稿；全部在同一事务内。
@@ -546,7 +560,7 @@ export const reviewsService = {
         const rev = conn
           .prepare(
             `SELECT id, review_id, revision_number, plugin_id, title, body_markdown,
-                    plugin_version, dsh_version, submitted_at
+                    plugin_version, dsh_version, submitted_at, assessment_level
              FROM review_revisions WHERE id = ?`,
           )
           .get(review.published_revision_id) as RevisionRow | undefined;
@@ -560,6 +574,7 @@ export const reviewsService = {
             pluginVersion: toVersionValue(rev.plugin_version),
             dshVersion: toVersionValue(rev.dsh_version),
             submittedAt: rev.submitted_at,
+            assessmentLevel: (rev.assessment_level as AssessmentLevel | null) ?? null,
           };
         }
       }

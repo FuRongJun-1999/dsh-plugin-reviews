@@ -34,6 +34,8 @@ interface EditBody {
   verdict?: unknown;
   /** 证据链（[{url, note?}]）：PUT 保存与 PATCH 提交共用同一个字段名。 */
   evidenceRefs?: unknown;
+  /** 测评档位（quick/standard/deep/security）：PUT 保存与 PATCH 提交共用。 */
+  assessmentLevel?: unknown;
 }
 
 function requireString(v: unknown, path: string): string {
@@ -56,6 +58,7 @@ export function draftPayloadOf(body: EditBody): DraftPayload {
     // parseDraftPayload 统一 fail-closed 校验，这里只做原样透传。
     verdict: (body.verdict ?? null) as DraftPayload['verdict'],
     evidence: (body.evidenceRefs ?? []) as DraftPayload['evidence'],
+    assessmentLevel: (body.assessmentLevel ?? null) as DraftPayload['assessmentLevel'],
   };
 }
 
@@ -129,6 +132,7 @@ export async function PATCH(request: Request): Promise<Response> {
         // （同 draftPayloadOf 的口径），合法性校验在 submitReview 内 fail-closed。
         verdict: typeof body.verdict === 'string' ? body.verdict : null,
         evidenceRefs: body.evidenceRefs,
+        assessmentLevel: typeof body.assessmentLevel === 'string' ? body.assessmentLevel : null,
       },
       getDb(),
     );

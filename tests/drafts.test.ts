@@ -124,9 +124,10 @@ describe('createOrGetDraft：一篇评测只有一份当前草稿', () => {
       pluginVersion: { kind: 'unknown' },
       dshVersion: { kind: 'unknown' },
       body: [],
-      // v2 载荷：五状态判定与证据链（dsh-bench 规范）
+      // v3 载荷：五状态判定、证据链与测评档位（dsh-bench 规范）
       verdict: null,
       evidence: [],
+      assessmentLevel: null,
     });
     expect(db.pragma('foreign_key_check')).toEqual([]);
   });
@@ -505,9 +506,9 @@ describe('getDraft / getReview：读取真实落库值', () => {
     expect(initial.reviewId).toBe(created.reviewId);
     expect(initial.ownerId).toBe(author);
     expect(initial.pluginId).toBe(plugin);
-    // v2：载荷增补 verdict/evidence（dsh-bench 规范）；旧载荷缺键由解析器兼容，
-    // schema 版本随写入形态升级。
-    expect(initial.payloadSchemaVersion).toBe(2);
+    // v3：载荷增补 verdict/evidence/assessmentLevel（dsh-bench 规范）；
+    // 旧载荷缺键由解析器兼容，schema 版本随写入形态升级。
+    expect(initial.payloadSchemaVersion).toBe(3);
 
     await reviewsService.saveDraft(
       caller(author),

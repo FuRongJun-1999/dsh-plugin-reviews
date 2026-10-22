@@ -15,6 +15,7 @@ import { BackLink } from '@/components/back-link';
 import { StartDraftButton } from '@/components/start-draft-button';
 import { repositoryAvailabilityLabels } from '@/packages/common/status-text';
 import { formatDateTimeOr } from '@/packages/common/time';
+import { tierLabel, securityLabel } from '@/packages/common/assessment';
 
 export const dynamic = 'force-dynamic';
 
@@ -71,6 +72,10 @@ export default async function PluginDetailPage({ params }: { params: Promise<{ p
                 {t}
               </span>
             ))}
+            <span className="tag">{tierLabel(plugin.assessmentTier)}</span>
+            <span className={plugin.securityAudit === true ? 'tag site' : 'tag'}>
+              {securityLabel(plugin.securityAudit)}
+            </span>
             {plugin.repository.isArchived ? <span className="tag warn">已归档</span> : null}
           </div>
 
